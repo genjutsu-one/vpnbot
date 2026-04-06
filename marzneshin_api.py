@@ -130,15 +130,16 @@ class MarzneshinAPI:
             random_suffix = ''.join(secrets.choice(string.digits) for _ in range(8))
             username = f"{telegram_id}{random_suffix}"
             
-            # Calculate expire date
-            expire_date = (datetime.utcnow() + timedelta(days=subscription_days)).isoformat()
+            # Calculate expire date (as Unix timestamp for compatibility)
+            expire_datetime = datetime.utcnow() + timedelta(days=subscription_days)
             
             # Create user with unlimited data
+            # Note: Some Marzneshin versions expect Unix timestamp or different format
             user_data = {
                 "username": username,
-                "expire_date": expire_date,
-                "data_limit": 0,  # unlimited
-                "services": [SERVICE_ID]
+                "expire": int(expire_datetime.timestamp()),  # Unix timestamp
+                "data_limit": None,  # unlimited (None instead of 0)
+                "inbound_id": INBOUND_ID
             }
             
             response = await self._make_request(
@@ -165,9 +166,9 @@ class MarzneshinAPI:
     async def modify_user(self, username: str, expire_days: int) -> dict:
         """Modify user subscription date"""
         try:
-            expire_date = (datetime.utcnow() + timedelta(days=expire_days)).isoformat()
+            expire_datetime = datetime.utcnow() + timedelta(days=expire_days)
             user_data = {
-                "expire_date": expire_date
+                "expire": int(expire_datetime.timestamp())  # Unix timestamp
             }
             
             response = await self.client.put(
