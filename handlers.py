@@ -293,11 +293,13 @@ async def process_subscription(callback: CallbackQuery, state: FSMContext):
                     
             except Exception as e:
                 logger.error(f"Error creating subscription: {e}")
-                await callback.answer(f"❌ Ошибка при создании подписки: {str(e)}", show_alert=True)
+                error_text = str(e)[:80]
+                await callback.answer(f"❌ Ошибка: {error_text}", show_alert=True)
                 return
     except Exception as e:
         logger.error(f"Error in process_subscription: {e}")
-        await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
+        error_text = str(e)[:80]
+        await callback.answer(f"❌ Ошибка: {error_text}", show_alert=True)
 
 
 @user_router.callback_query(F.data == "account")
