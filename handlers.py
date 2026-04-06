@@ -200,7 +200,8 @@ async def trial_start(callback: CallbackQuery):
                 
     except Exception as e:
         logger.error(f"Error in trial_start: {e}")
-        await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
+        error_msg = str(e)[:100]  # Limit error message length
+        await callback.answer(f"❌ Ошибка: {error_msg}", show_alert=True)
 
 
 @user_router.callback_query(F.data == "subscribe_menu")

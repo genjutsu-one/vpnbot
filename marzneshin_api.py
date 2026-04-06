@@ -4,12 +4,17 @@ from datetime import datetime, timedelta
 from typing import Optional
 import secrets
 import string
+import logging
+import json
+
+logger = logging.getLogger(__name__)
 
 MARZNESHIN_API_URL = os.getenv("MARZNESHIN_API_URL", "http://localhost:8000")
 MARZNESHIN_ADMIN_USERNAME = os.getenv("MARZNESHIN_ADMIN_USERNAME", "admin")
 MARZNESHIN_ADMIN_PASSWORD = os.getenv("MARZNESHIN_ADMIN_PASSWORD", "admin")
 SERVICE_ID = int(os.getenv("SERVICE_ID", "1"))
 INBOUND_ID = int(os.getenv("INBOUND_ID", "1"))
+TOKEN_CACHE_FILE = ".token_cache"
 
 
 class MarzneshinAPI:
@@ -29,9 +34,33 @@ class MarzneshinAPI:
         if self.client:
             await self.client.aclose()
     
+    async def _make_request(self, method: str, url: str, retry_on_401: bool = True, **kwargs):
+        """Make HTTP request with automatic retry on 401 (token expired)"""
+        try:
+            response = await self.client.request(method, url, headers=self._get_headers(), **kwargs)
+            
+            # If 401 and retry enabled, try to re-authenticate and retry
+            if response.status_code == 401 and retry_on_401:
+                logger.warning("Token expired (401), re-authenticating...")
+                await self.authenticate()
+                response = await self.client.request(method, url, headers=self._get_headers(), **kwargs)
+            
+            response.raise_for_status()
+            return response
+        except Exception as e:
+            logger.error(f"Request failed ({method} {url}): {e}")
+            raise
+    
     async def authenticate(self):
         """Get admin token from Marzneshin"""
         try:
+            # Try to load cached token first
+            cached_token = self._load_cached_token()
+            if cached_token:
+                logger.info("Using cached token")
+                self.token = cached_token
+                return
+            
             data = {
                 "username": self.admin_username,
                 "password": self.admin_password,
@@ -44,8 +73,41 @@ class MarzneshinAPI:
             response.raise_for_status()
             token_data = response.json()
             self.token = token_data.get("access_token")
+            
+            # Cache the token
+            self._save_cached_token(self.token)
+            logger.info("Token obtained and cached")
         except Exception as e:
             raise Exception(f"Failed to authenticate with Marzneshin: {e}")
+    
+    def _load_cached_token(self) -> Optional[str]:
+        """Load token from cache file if it exists"""
+        try:
+            if os.path.exists(TOKEN_CACHE_FILE):
+                with open(TOKEN_CACHE_FILE, 'r') as f:
+                    data = json.load(f)
+                    # Check if token is still valid (not expired)
+                    if data.get("expires_at"):
+                        expires_at = datetime.fromisoformat(data["expires_at"])
+                        if expires_at > datetime.utcnow():
+                            return data.get("token")
+                    os.remove(TOKEN_CACHE_FILE)  # Remove expired token
+        except Exception as e:
+            logger.debug(f"Failed to load cached token: {e}")
+        return None
+    
+    def _save_cached_token(self, token: str):
+        """Save token to cache file with expiration time"""
+        try:
+            # Token expires in 24 hours (Marzneshin default)
+            expires_at = (datetime.utcnow() + timedelta(hours=24)).isoformat()
+            with open(TOKEN_CACHE_FILE, 'w') as f:
+                json.dump({
+                    "token": token,
+                    "expires_at": expires_at
+                }, f)
+        except Exception as e:
+            logger.warning(f"Failed to cache token: {e}")
     
     def _get_headers(self):
         """Get headers with authentication token"""
@@ -72,10 +134,10 @@ class MarzneshinAPI:
                 "services": [SERVICE_ID]
             }
             
-            response = await self.client.post(
+            response = await self._make_request(
+                "POST",
                 f"{self.api_url}/api/users",
-                json=user_data,
-                headers=self._get_headers()
+                json=user_data
             )
             response.raise_for_status()
             return response.json()
