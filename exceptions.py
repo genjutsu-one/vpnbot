@@ -53,18 +53,18 @@ def handle_api_error(error: Exception) -> str:
     error_str = str(error).lower()
     
     if "connection" in error_str or "timeout" in error_str:
-        return "❌ Ошибка соединения с сервером. Попробуйте позже."
+        return "Ошибка соединения с сервером. Попробуйте позже."
     
     if "unauthorized" in error_str or "403" in error_str:
-        return "❌ Ошибка аутентификации. Проверьте учетные данные."
+        return "Ошибка аутентификации. Проверьте учетные данные."
     
     if "not found" in error_str or "404" in error_str:
-        return "❌ Ресурс не найден на сервере."
+        return "Ресурс не найден на сервере."
     
     if "invalid" in error_str:
-        return "❌ Неверные данные. Проверьте введенную информацию."
+        return "Неверные данные. Проверьте введенную информацию."
     
-    return f"❌ Ошибка: {error_str[:100]}"
+    return f"Ошибка: {error_str[:100]}"
 
 
 def log_error(context: str, error: Exception):

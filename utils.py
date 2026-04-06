@@ -84,12 +84,12 @@ async def create_subscription(
 
 
 async def get_active_subscription(session: AsyncSession, telegram_id: int) -> Subscription:
-    """Get active subscription for user"""
+    """Get active subscription for user (returns most recent one)"""
     stmt = select(Subscription).where(
         (Subscription.telegram_id == telegram_id) & 
         (Subscription.status == 'active') &
         (Subscription.expired_at > datetime.utcnow())
-    ).order_by(Subscription.expired_at.desc())
+    ).order_by(Subscription.expired_at.desc()).limit(1)
     
     result = await session.execute(stmt)
     return result.scalar_one_or_none()

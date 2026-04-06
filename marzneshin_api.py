@@ -263,29 +263,17 @@ class MarzneshinAPI:
             raise Exception(f"Failed to get users list: {e}")
     
     async def get_system_stats(self) -> dict:
-        """Get system statistics"""
+        """Get system statistics from Marzneshin API"""
         try:
-            stats = {}
-            
-            # Get users stats
             response = await self.client.get(
                 f"{self.api_url}/api/system/stats/users",
                 headers=self._get_headers()
             )
             response.raise_for_status()
-            stats['users'] = response.json()
-            
-            # Get nodes stats
-            response = await self.client.get(
-                f"{self.api_url}/api/system/stats/nodes",
-                headers=self._get_headers()
-            )
-            response.raise_for_status()
-            stats['nodes'] = response.json()
-            
-            return stats
+            return response.json()
         except Exception as e:
-            raise Exception(f"Failed to get system stats: {e}")
+            logger.error(f"Failed to get system stats: {e}")
+            raise
     
     async def get_inbounds(self) -> list:
         """Get all inbounds"""
