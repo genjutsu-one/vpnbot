@@ -151,7 +151,6 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
-.token_cache
 
 # Database backups
 *.db-backup
