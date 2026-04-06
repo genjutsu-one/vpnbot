@@ -2,15 +2,16 @@ import os
 import asyncio
 import logging
 from dotenv import load_dotenv
+
+# Load environment variables FIRST, before any other imports
+load_dotenv()
+
 from aiogram import Dispatcher, Bot
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand, BotCommandScopeDefault
 
 from handlers import user_router, admin_router
 from database import init_db
-
-# Load environment variables
-load_dotenv()
 
 # Setup logging
 logging.basicConfig(
