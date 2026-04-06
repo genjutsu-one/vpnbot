@@ -21,10 +21,7 @@ logger = logging.getLogger(__name__)
 user_router = Router()
 admin_router = Router()
 
-# Admin ID filter
-def is_admin(user_id: int) -> bool:
-    admin_ids = os.getenv("ADMIN_IDS", "").split(",")
-    return str(user_id) in admin_ids
+# Note: is_admin is imported from utils
 
 # FSM States for admin operations
 class AdminStates(StatesGroup):
@@ -99,11 +96,25 @@ RESET_WARNING = """<b>Внимание❗️</b>
 
 <b>Вы уверены?</b>"""
 
+ADMIN_START_MESSAGE = """<b>🔐 Добро пожаловать в админ-панель Legit VPN! ⚜️</b>
+
+Вы вошли как администратор системы.
+
+<b>Доступные команды:</b>
+<blockquote>
+/admin - Администраторская панель
+/users - Управление пользователями
+/stats - Статистика системы
+/notify - Отправить уведомление всем
+</blockquote>
+
+<i>Для управления используйте кнопки ниже или введите /admin</i>"""
+
 # ========== USER HANDLERS ==========
 
 @user_router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, command: CommandStart):
-    """Start command handler with referral support"""
+    """Start command handler with referral support - different for admins and users"""
     async with AsyncSessionLocal() as session:
         try:
             user = await get_or_create_user(session, message.from_user.id, message.from_user.username or str(message.from_user.id))
@@ -116,7 +127,12 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandStart):
                 except Exception as e:
                     logger.warning(f"Failed to process referral: {e}")
             
-            await message.answer(START_MESSAGE, parse_mode="HTML", reply_markup=get_main_keyboard())
+            # Check if user is admin
+            is_admin_user = is_admin(message.from_user.id)
+            greeting_msg = ADMIN_START_MESSAGE if is_admin_user else START_MESSAGE
+            keyboard = get_admin_main_keyboard() if is_admin_user else get_main_keyboard()
+            
+            await message.answer(greeting_msg, parse_mode="HTML", reply_markup=keyboard)
             
         except Exception as e:
             logger.error(f"Error in start command: {e}")
@@ -184,27 +200,27 @@ async def cmd_update_keys(message: Message):
 @user_router.callback_query(F.data == "trial_vip")
 async def trial_vip(callback: CallbackQuery):
     """Trial VIP subscription"""
-    if not is_admin(callback.from_user.id):
-        async with AsyncSessionLocal() as session:
-            try:
-                user = await get_or_create_user(session, callback.from_user.id, callback.from_user.username or str(callback.from_user.id))
+    async with AsyncSessionLocal() as session:
+        try:
+            user = await get_or_create_user(session, callback.from_user.id, callback.from_user.username or str(callback.from_user.id))
+            
+            async with MarzneshinAPI() as api:
+                user_data = await api.create_user(callback.from_user.id, subscription_days=3)
+                username = user_data.get('username')
                 
-                async with MarzneshinAPI() as api:
-                    user_data = await api.create_user(callback.from_user.id, subscription_days=3)
-                    username = user_data.get('username')
-                    
-                    await create_subscription(session, callback.from_user.id, username, days=3)
-                    
-                    key_link = f"{MARZNESHIN_API_URL}/user/{username}"
-                    await callback.message.answer(
-                        TRIAL_STARTED.format(key_link),
-                        parse_mode="HTML",
-                        reply_markup=get_main_keyboard()
-                    )
-                    
-            except Exception as e:
-                error = str(e)[:80]
-                await callback.answer(f"❌ Ошибка: {error}", show_alert=True)
+                await create_subscription(session, callback.from_user.id, username, days=3)
+                
+                key_link = f"{MARZNESHIN_API_URL}/user/{username}"
+                await callback.message.answer(
+                    TRIAL_STARTED.format(key_link),
+                    parse_mode="HTML",
+                    reply_markup=get_main_keyboard()
+                )
+                
+        except Exception as e:
+            error = str(e)[:80]
+            logger.error(f"Trial subscription error: {e}")
+            await callback.answer(f"❌ Ошибка: {error}", show_alert=True)
 
 @user_router.callback_query(F.data.startswith("buy_"))
 async def buy_subscription(callback: CallbackQuery):
@@ -218,8 +234,10 @@ async def buy_subscription(callback: CallbackQuery):
             async with MarzneshinAPI() as api:
                 user_data = await api.create_user(callback.from_user.id, subscription_days=days)
                 username = user_data.get('username')
+                logger.info(f"Created Marzneshin user: {username}")
                 
                 await create_subscription(session, callback.from_user.id, username, days=days)
+                logger.info(f"Subscription created for user {callback.from_user.id}")
                 
                 key_link = f"{MARZNESHIN_API_URL}/user/{username}"
                 await callback.message.answer(
@@ -231,8 +249,12 @@ async def buy_subscription(callback: CallbackQuery):
                     reply_markup=get_main_keyboard()
                 )
                 
+    except ValueError as e:
+        logger.error(f"Invalid days value: {e}")
+        await callback.answer(f"❌ Ошибка при обработке подписки", show_alert=True)
     except Exception as e:
         error = str(e)[:80]
+        logger.error(f"Buy subscription error: {e}")
         await callback.answer(f"❌ Ошибка: {error}", show_alert=True)
 
 @user_router.callback_query(F.data == "reset_keys_confirm")
@@ -246,11 +268,13 @@ async def reset_keys_confirm(callback: CallbackQuery):
                 # Delete old subscription
                 old_sub = await get_active_subscription(session, callback.from_user.id)
                 if old_sub:
+                    logger.info(f"Deleting old user: {old_sub.marzneshin_username}")
                     await api.delete_user(old_sub.marzneshin_username)
                 
                 # Create new one
                 user_data = await api.create_user(callback.from_user.id, subscription_days=30)
                 username = user_data.get('username')
+                logger.info(f"Created new Marzneshin user: {username}")
                 
                 # Update DB
                 if old_sub:
@@ -270,6 +294,7 @@ async def reset_keys_confirm(callback: CallbackQuery):
                 
         except Exception as e:
             error = str(e)[:80]
+            logger.error(f"Reset keys error: {e}")
             await callback.answer(f"❌ Ошибка: {error}", show_alert=True)
 
 # ========== ADMIN HANDLERS ==========
@@ -477,6 +502,7 @@ async def admin_extend_process(message: Message, state: FSMContext):
             async with MarzneshinAPI() as api:
                 new_expire = sub.expired_at + timedelta(days=days)
                 await api.modify_user(sub.marzneshin_username, days)
+                logger.info(f"Extended subscription for {sub.marzneshin_username} by {days} days")
                 
                 sub.expired_at = new_expire
                 await session.commit()
@@ -491,6 +517,7 @@ async def admin_extend_process(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ Введите число")
     except Exception as e:
+        logger.error(f"Extend subscription error: {e}")
         await message.answer(f"❌ Ошибка: {str(e)[:80]}")
         await state.clear()
 
@@ -529,6 +556,7 @@ async def admin_revoke_confirm(callback: CallbackQuery):
             
             if sub:
                 async with MarzneshinAPI() as api:
+                    logger.info(f"Deleting Marzneshin user: {sub.marzneshin_username}")
                     await api.delete_user(sub.marzneshin_username)
                 
                 sub.status = "revoked"
@@ -537,6 +565,7 @@ async def admin_revoke_confirm(callback: CallbackQuery):
             await callback.message.edit_text("✅ Подписка аннулирована", parse_mode="HTML")
             
     except Exception as e:
+        logger.error(f"Revoke subscription error: {e}")
         await callback.answer(f"❌ Ошибка: {str(e)[:80]}", show_alert=True)
 
 @admin_router.callback_query(F.data == "admin_create_user")
@@ -608,6 +637,7 @@ async def admin_notify_send(message: Message, state: FSMContext):
             query = select(User)
             result = await session.execute(query)
             users = result.scalars().all()
+            logger.info(f"Sending notification to {len(users)} users")
             
             sent = 0
             failed = 0
@@ -620,8 +650,11 @@ async def admin_notify_send(message: Message, state: FSMContext):
                         parse_mode="HTML"
                     )
                     sent += 1
-                except:
+                except Exception as e:
+                    logger.warning(f"Failed to send notification to {user.telegram_id}: {e}")
                     failed += 1
+            
+            logger.info(f"Notification sent: {sent} success, {failed} failed")
             
             await message.answer(
                 f"✅ Уведомление отправлено\n\n"
@@ -632,6 +665,7 @@ async def admin_notify_send(message: Message, state: FSMContext):
             await state.clear()
             
     except Exception as e:
+        logger.error(f"Notify error: {e}")
         await message.answer(f"❌ Ошибка: {str(e)[:80]}")
         await state.clear()
 
