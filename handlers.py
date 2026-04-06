@@ -301,15 +301,89 @@ async def reset_keys_confirm(callback: CallbackQuery):
 
 @admin_router.message(Command("admin"))
 async def cmd_admin(message: Message):
-    """Admin panel (only for admins, hidden from regular users)"""
+    """Admin panel (only for admins)"""
     if not is_admin(message.from_user.id):
-        return
+        return  # Silently ignore non-admins
     
     admin_text = """<b>🔧 Администраторская панель Legit VPN</b>
 
 Выберите действие:"""
     
     await message.answer(admin_text, parse_mode="HTML", reply_markup=get_admin_main_keyboard())
+
+@admin_router.message(Command("stats"))
+async def cmd_stats(message: Message):
+    """Admin: Statistics command"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    try:
+        async with AsyncSessionLocal() as session:
+            total_users = await session.scalar(select(func.count(User.id)))
+            active_subs = await session.scalar(
+                select(func.count(Subscription.id)).where(Subscription.status == "active")
+            )
+            total_payments = await session.scalar(
+                select(func.sum(Payment.amount)).where(Payment.status == "completed")
+            ) or 0
+            
+            text = f"""<b>📈 Статистика системы</b>
+
+👥 <b>Пользователи:</b>
+  • Всего: <code>{total_users}</code>
+
+💳 <b>Подписки:</b>
+  • Активных: <code>{active_subs}</code>
+
+💰 <b>Платежи:</b>
+  • Сумма: <code>{total_payments}₽</code>"""
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="admin_main")]
+            ])
+            
+            await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+            
+    except Exception as e:
+        logger.error(f"Stats command error: {e}")
+        await message.answer(f"❌ Ошибка: {str(e)[:80]}")
+
+@admin_router.message(Command("users"))
+async def cmd_users(message: Message):
+    """Admin: Users management command"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    text = """<b>👥 Управление пользователями</b>
+
+Выберите действие:"""
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Поиск пользователя", callback_data="admin_search_user")],
+        [InlineKeyboardButton(text="📋 Все пользователи", callback_data="admin_list_all")],
+        [InlineKeyboardButton(text="➕ Создать пользователя", callback_data="admin_create_user")],
+        [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="admin_main")]
+    ])
+    
+    await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+@admin_router.message(Command("notify"))
+async def cmd_notify(message: Message, state: FSMContext):
+    """Admin: Notify all users command"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    await state.set_state(AdminStates.wait_notification_text)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_main")]
+    ])
+    
+    await message.answer(
+        "<b>📢 Введите текст уведомления для всех пользователей:</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
 
 @admin_router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):

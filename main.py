@@ -8,10 +8,11 @@ load_dotenv()
 
 from aiogram import Dispatcher, Bot
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import BotCommand, BotCommandScopeDefault
+from aiogram.types import BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 
 from handlers import user_router, admin_router
 from database import init_db
+from utils import is_admin
 
 # Setup logging
 logging.basicConfig(
@@ -26,19 +27,46 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN not found in .env file")
 
+# Get admin IDs
+ADMIN_IDS = list(map(int, os.getenv("ADMIN_IDS", "").split(","))) if os.getenv("ADMIN_IDS") else []
 
-async def set_default_commands(bot: Bot):
-    """Set default commands for the bot"""
-    commands = [
+
+async def set_commands(bot: Bot):
+    """Set commands for users and admins with different scopes"""
+    
+    # Commands for regular users (without /admin)
+    user_commands = [
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="account", description="Мой аккаунт"),
-        BotCommand(command="pay", description="Оплата"),
+        BotCommand(command="pay", description="Оплата подписки"),
         BotCommand(command="update_keys", description="Обновить ключи"),
-        BotCommand(command="help", description="Помощь"),
-        BotCommand(command="admin", description="Админ-панель"),
+        BotCommand(command="help", description="Справка"),
     ]
     
-    await bot.set_my_commands(commands, BotCommandScopeDefault())
+    # Set commands for regular users (default scope)
+    await bot.set_my_commands(user_commands, BotCommandScopeDefault())
+    logger.info("User commands set")
+    
+    # Commands for admins (with additional admin commands)
+    admin_commands = [
+        BotCommand(command="start", description="Главное меню / Админ-панель"),
+        BotCommand(command="admin", description="Администраторская панель"),
+        BotCommand(command="stats", description="Статистика системы"),
+        BotCommand(command="users", description="Управление пользователями"),
+        BotCommand(command="notify", description="Отправить уведомление"),
+        BotCommand(command="account", description="Мой аккаунт"),
+        BotCommand(command="pay", description="Оплата подписки"),
+        BotCommand(command="update_keys", description="Обновить ключи"),
+        BotCommand(command="help", description="Справка"),
+    ]
+    
+    # Set commands for each admin individually (overrides default scope)
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.set_my_commands(admin_commands, BotCommandScopeChat(chat_id=admin_id))
+            logger.info(f"Admin commands set for user {admin_id}")
+        except Exception as e:
+            logger.warning(f"Failed to set admin commands for {admin_id}: {e}")
 
 
 async def main():
@@ -56,9 +84,9 @@ async def main():
     dp.include_router(user_router)
     dp.include_router(admin_router)
     
-    # Set default commands
-    await set_default_commands(bot)
-    logger.info("Default commands set")
+    # Set commands for users and admins
+    await set_commands(bot)
+    logger.info("Commands configured")
     
     try:
         logger.info("Bot started polling")
