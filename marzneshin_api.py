@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 MARZNESHIN_API_URL = os.getenv("MARZNESHIN_API_URL", "http://localhost:8000")
 MARZNESHIN_ADMIN_USERNAME = os.getenv("MARZNESHIN_ADMIN_USERNAME", "admin")
 MARZNESHIN_ADMIN_PASSWORD = os.getenv("MARZNESHIN_ADMIN_PASSWORD", "admin")
+MARZNESHIN_ACCESS_TOKEN = os.getenv("MARZNESHIN_ACCESS_TOKEN", "")  # Optional pre-obtained token
 SERVICE_ID = int(os.getenv("SERVICE_ID", "1"))
 INBOUND_ID = int(os.getenv("INBOUND_ID", "1"))
 TOKEN_CACHE_FILE = ".token_cache"
@@ -22,7 +23,8 @@ class MarzneshinAPI:
         self.api_url = MARZNESHIN_API_URL
         self.admin_username = MARZNESHIN_ADMIN_USERNAME
         self.admin_password = MARZNESHIN_ADMIN_PASSWORD
-        self.token = None
+        # Use pre-obtained token from .env if available
+        self.token = MARZNESHIN_ACCESS_TOKEN if MARZNESHIN_ACCESS_TOKEN else None
         self.client = None
     
     async def __aenter__(self):
@@ -54,6 +56,11 @@ class MarzneshinAPI:
     async def authenticate(self):
         """Get admin token from Marzneshin"""
         try:
+            # If token already set (from .env), skip authentication
+            if self.token:
+                logger.info("Token already set (from .env or cache)")
+                return
+            
             # Try to load cached token first
             cached_token = self._load_cached_token()
             if cached_token:
@@ -139,7 +146,6 @@ class MarzneshinAPI:
                 f"{self.api_url}/api/users",
                 json=user_data
             )
-            response.raise_for_status()
             return response.json()
         except Exception as e:
             raise Exception(f"Failed to create user: {e}")
@@ -212,16 +218,7 @@ class MarzneshinAPI:
     
     async def get_subscription_link(self, username: str, subscription_key: str) -> str:
         """Get subscription link for user"""
-        try:
-            # This returns the actual subscription config
-            response = await self.client.get(
-                f"{self.api_url}/sub/{username}/{subscription_key}/xray"
-            )
-            response.raise_for_status()
-            # Return the link format for display
-            return f"{self.api_url}/sub/{username}/{subscription_key}"
-        except Exception as e:
-            raise Exception(f"Failed to get subscription link: {e}")
+        return f"{self.api_url}/sub/{username}/{subscription_key}"
     
     async def revoke_user_subscription(self, username: str) -> dict:
         """Revoke user subscription keys"""
@@ -251,7 +248,8 @@ class MarzneshinAPI:
         """Get list of users"""
         try:
             response = await self.client.get(
-                f"{self.api_url}/api/users?page={page}&size={size}",
+                f"{self.api_url}/api/users",
+                params={"page": page, "size": size},
                 headers=self._get_headers()
             )
             response.raise_for_status()
@@ -283,3 +281,27 @@ class MarzneshinAPI:
             return stats
         except Exception as e:
             raise Exception(f"Failed to get system stats: {e}")
+    
+    async def get_inbounds(self) -> list:
+        """Get all inbounds"""
+        try:
+            response = await self.client.get(
+                f"{self.api_url}/api/inbounds",
+                headers=self._get_headers()
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            raise Exception(f"Failed to get inbounds: {e}")
+    
+    async def resync_node(self, node_id: int) -> dict:
+        """Resynchronize a node"""
+        try:
+            response = await self.client.post(
+                f"{self.api_url}/api/nodes/{node_id}/resync",
+                headers=self._get_headers()
+            )
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            raise Exception(f"Failed to resync node: {e}")
