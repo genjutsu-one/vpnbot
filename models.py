@@ -8,10 +8,10 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = "users"
     
-    telegram_id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True)
+    telegram_id = Column(Integer, unique=True, nullable=False, index=True)
     username = Column(String(32), unique=True, nullable=False)
-    subscription_key = Column(String(20), nullable=True)
-    balance_points = Column(Integer, default=0)
+    balance = Column(Integer, default=0)  # Баллы
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -22,11 +22,9 @@ class Subscription(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     telegram_id = Column(Integer, nullable=False, index=True)
-    username = Column(String(32), nullable=False)
-    subscription_key = Column(String(20), unique=True, nullable=False)
-    start_date = Column(DateTime, default=datetime.utcnow)
-    expire_date = Column(DateTime, nullable=False)
-    is_active = Column(Boolean, default=True)
+    marzneshin_username = Column(String(32), unique=True, nullable=False)
+    status = Column(String(20), default='active')  # 'active', 'expired', 'revoked'
+    expired_at = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

@@ -65,19 +65,17 @@ async def get_or_create_user(session: AsyncSession, telegram_id: int, username: 
 async def create_subscription(
     session: AsyncSession,
     telegram_id: int,
-    username: str,
+    marzneshin_username: str,
     days: int
 ) -> Subscription:
     """Create subscription for user"""
-    key = generate_subscription_key()
-    expire_date = datetime.utcnow() + timedelta(days=days)
+    expired_at = datetime.utcnow() + timedelta(days=days)
     
     subscription = Subscription(
         telegram_id=telegram_id,
-        username=username,
-        subscription_key=key,
-        expire_date=expire_date,
-        is_active=True
+        marzneshin_username=marzneshin_username,
+        status='active',
+        expired_at=expired_at
     )
     session.add(subscription)
     await session.commit()
@@ -89,9 +87,9 @@ async def get_active_subscription(session: AsyncSession, telegram_id: int) -> Su
     """Get active subscription for user"""
     stmt = select(Subscription).where(
         (Subscription.telegram_id == telegram_id) & 
-        (Subscription.is_active == True) &
-        (Subscription.expire_date > datetime.utcnow())
-    ).order_by(Subscription.expire_date.desc())
+        (Subscription.status == 'active') &
+        (Subscription.expired_at > datetime.utcnow())
+    ).order_by(Subscription.expired_at.desc())
     
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
@@ -103,7 +101,7 @@ async def extend_subscription(
     additional_days: int
 ) -> Subscription:
     """Extend existing subscription"""
-    subscription.expire_date = subscription.expire_date + timedelta(days=additional_days)
+    subscription.expired_at = subscription.expired_at + timedelta(days=additional_days)
     subscription.updated_at = datetime.utcnow()
     await session.commit()
     await session.refresh(subscription)
@@ -117,7 +115,7 @@ async def add_points(session: AsyncSession, telegram_id: int, points: int) -> Us
     user = result.scalar_one_or_none()
     
     if user:
-        user.balance_points += points
+        user.balance += points
         await session.commit()
         await session.refresh(user)
     

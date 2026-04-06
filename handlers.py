@@ -319,13 +319,21 @@ async def cmd_stats(message: Message):
     
     try:
         async with AsyncSessionLocal() as session:
-            total_users = await session.scalar(select(func.count(User.id)))
-            active_subs = await session.scalar(
-                select(func.count(Subscription.id)).where(Subscription.status == "active")
+            # Count users
+            result = await session.execute(select(func.count()).select_from(User))
+            total_users = result.scalar() or 0
+            
+            # Count active subscriptions
+            result = await session.execute(
+                select(func.count()).select_from(Subscription).where(Subscription.status == "active")
             )
-            total_payments = await session.scalar(
+            active_subs = result.scalar() or 0
+            
+            # Sum payments
+            result = await session.execute(
                 select(func.sum(Payment.amount)).where(Payment.status == "completed")
-            ) or 0
+            )
+            total_payments = result.scalar() or 0
             
             text = f"""<b>📈 Статистика системы</b>
 
@@ -375,14 +383,9 @@ async def cmd_notify(message: Message, state: FSMContext):
     
     await state.set_state(AdminStates.wait_notification_text)
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_main")]
-    ])
-    
     await message.answer(
-        "<b>📢 Введите текст уведомления для всех пользователей:</b>",
-        parse_mode="HTML",
-        reply_markup=keyboard
+        "<b>📢 Отправьте текст уведомления для всех пользователей:</b>",
+        parse_mode="HTML"
     )
 
 @admin_router.callback_query(F.data == "admin_stats")
@@ -394,14 +397,21 @@ async def admin_stats(callback: CallbackQuery):
     
     try:
         async with AsyncSessionLocal() as session:
-            # Get stats from database
-            total_users = await session.scalar(select(func.count(User.id)))
-            active_subs = await session.scalar(
-                select(func.count(Subscription.id)).where(Subscription.status == "active")
+            # Count users
+            result = await session.execute(select(func.count()).select_from(User))
+            total_users = result.scalar() or 0
+            
+            # Count active subscriptions
+            result = await session.execute(
+                select(func.count()).select_from(Subscription).where(Subscription.status == "active")
             )
-            total_payments = await session.scalar(
+            active_subs = result.scalar() or 0
+            
+            # Sum payments
+            result = await session.execute(
                 select(func.sum(Payment.amount)).where(Payment.status == "completed")
-            ) or 0
+            )
+            total_payments = result.scalar() or 0
             
             text = f"""<b>📈 Статистика системы</b>
 
@@ -421,6 +431,7 @@ async def admin_stats(callback: CallbackQuery):
             await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
             
     except Exception as e:
+        logger.error(f"Admin stats error: {e}")
         await callback.answer(f"❌ Ошибка: {str(e)[:80]}", show_alert=True)
 
 @admin_router.callback_query(F.data == "admin_users")
@@ -471,31 +482,32 @@ async def admin_list_users(callback: CallbackQuery):
 
 @admin_router.callback_query(F.data == "admin_search_user")
 async def admin_search_user(callback: CallbackQuery, state: FSMContext):
-    """Admin: Search user"""
+    """Admin: Search user - send new message and wait for response"""
     if not is_admin(callback.from_user.id):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
     
     await state.set_state(AdminStates.wait_user_id)
+    await state.update_data(search_context="search")
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_users")]
-    ])
-    
-    await callback.message.edit_text(
-        "<b>🔍 Введите ID пользователя:</b>",
-        parse_mode="HTML",
-        reply_markup=keyboard
+    await callback.message.answer(
+        "<b>🔍 Отправьте Telegram ID пользователя для поиска:</b>",
+        parse_mode="HTML"
     )
+    await callback.answer("")
 
 @admin_router.message(AdminStates.wait_user_id)
 async def admin_search_user_result(message: Message, state: FSMContext):
-    """Process user search"""
+    """Process user search - parse telegram ID only"""
     if not is_admin(message.from_user.id):
+        await state.clear()
         return
     
     try:
+        # Extract first number as telegram ID (ignore 8-digit suffix)
         user_id = int(message.text)
+        data = await state.get_data()
+        search_context = data.get("search_context")
         
         async with AsyncSessionLocal() as session:
             user = await session.get(User, user_id)
@@ -531,7 +543,7 @@ async def admin_search_user_result(message: Message, state: FSMContext):
             await state.clear()
             
     except ValueError:
-        await message.answer("❌ Введите корректный ID")
+        await message.answer("❌ Введите корректный числовой ID")
 
 @admin_router.callback_query(F.data.startswith("admin_extend_"))
 async def admin_extend_user(callback: CallbackQuery, state: FSMContext):
@@ -544,15 +556,11 @@ async def admin_extend_user(callback: CallbackQuery, state: FSMContext):
     await state.update_data(extend_user_id=user_id)
     await state.set_state(AdminStates.wait_extend_days)
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_users")]
-    ])
-    
-    await callback.message.edit_text(
-        f"<b>⏱️ На сколько дней продлить подписку\nпользователю <code>{user_id}</code>?</b>",
-        parse_mode="HTML",
-        reply_markup=keyboard
+    await callback.message.answer(
+        f"<b>⏱️ На сколько дней продлить подписку пользователю <code>{user_id}</code>?</b>",
+        parse_mode="HTML"
     )
+    await callback.answer("")
 
 @admin_router.message(AdminStates.wait_extend_days)
 async def admin_extend_process(message: Message, state: FSMContext):
@@ -650,16 +658,13 @@ async def admin_create_user(callback: CallbackQuery, state: FSMContext):
         return
     
     await state.set_state(AdminStates.wait_user_id)
+    await state.update_data(search_context="create")
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_users")]
-    ])
-    
-    await callback.message.edit_text(
-        "<b>➕ Введите ID для создания пользователя:</b>",
-        parse_mode="HTML",
-        reply_markup=keyboard
+    await callback.message.answer(
+        "<b>➕ Отправьте Telegram ID для создания нового аккаунта:</b>",
+        parse_mode="HTML"
     )
+    await callback.answer("")
 
 @admin_router.callback_query(F.data == "admin_points")
 async def admin_points_menu(callback: CallbackQuery):
@@ -687,15 +692,11 @@ async def admin_notify_menu(callback: CallbackQuery, state: FSMContext):
     
     await state.set_state(AdminStates.wait_notification_text)
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_main")]
-    ])
-    
-    await callback.message.edit_text(
-        "<b>📢 Введите текст уведомления для всех пользователей:</b>",
-        parse_mode="HTML",
-        reply_markup=keyboard
+    await callback.message.answer(
+        "<b>📢 Отправьте текст уведомления для всех пользователей:</b>",
+        parse_mode="HTML"
     )
+    await callback.answer("")
 
 @admin_router.message(AdminStates.wait_notification_text)
 async def admin_notify_send(message: Message, state: FSMContext):
