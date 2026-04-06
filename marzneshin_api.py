@@ -128,7 +128,7 @@ class MarzneshinAPI:
         try:
             # Generate random suffix (8 digits)
             random_suffix = ''.join(secrets.choice(string.digits) for _ in range(8))
-            username = f"{telegram_id}{random_suffix}"
+            username = f"{telegram_id}_{random_suffix}"
             
             # Calculate expire date as ISO datetime string
             expire_datetime = datetime.utcnow() + timedelta(days=subscription_days)

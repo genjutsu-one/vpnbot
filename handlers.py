@@ -1,9 +1,10 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery, User as TgUser
+from aiogram.types import Message, CallbackQuery, User as TgUser, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
 from datetime import datetime, timedelta
 import os
 import logging
@@ -16,489 +17,274 @@ from marzneshin_api import MarzneshinAPI, MARZNESHIN_API_URL
 
 logger = logging.getLogger(__name__)
 
-# Initialize router
+# Initialize routers
 user_router = Router()
 admin_router = Router()
 
-# Messages for users
-START_MESSAGE = """**Добро пожаловать в Legit VPN!** 🚀
+# Admin ID filter
+def is_admin(user_id: int) -> bool:
+    admin_ids = os.getenv("ADMIN_IDS", "").split(",")
+    return str(user_id) in admin_ids
+
+# FSM States for admin operations
+class AdminStates(StatesGroup):
+    wait_user_id = State()
+    wait_extend_days = State()
+    wait_points_amount = State()
+    wait_notification_text = State()
+
+# ========== USER MESSAGES ==========
+
+START_MESSAGE = """<b>Добро пожаловать в Legit VPN! ⚜️</b>
 
 Забудь про «недоступно в вашем регионе» и вечные загрузки. Наш VPN работает даже на парковке!
+<blockquote><b>❯ Безлимитный трафик
+❯ Максимальная анонимность
+❯ Стабильное соединение</b></blockquote>
+<i>Твой интернет — твои правила.</i>"""
 
-> ❯ **Безлимитный трафик**
-> ❯ **Максимальная анонимность**
-> ❯ **Стабильное соединение**
+TRIAL_STARTED = """<b>Твой тест-драйв Legit VPN начался! 🎉</b>
 
-*Твой интернет — твои правила.*"""
-
-TRIAL_STARTED = """**Твой тест-драйв Legit VPN начался!** 🎉
-
-Мы активировали для тебя бесплатный доступ на `3 дня`.
-
+Мы активировали для тебя бесплатный доступ на <code>3 дня</code>.
 Теперь весь интернет в твоем распоряжении без ограничений по скорости!
 
-`{}`
+<code>{}</code>
 
 Приятного пользования!"""
 
-PAYMENT_MENU = """**Выберите способ оплаты:**"""
+SUBSCRIPTION_MENU = """<b>Выбирай свой тариф Legit VPN⚜</b>
 
-SUBSCRIPTION_MENU = """**Выбирай свой тариф Legit VPN** ⚜
+Оплачивая подписку, ты получаешь не просто доступ, а гарантию стабильности:
+<blockquote>❯ Высокая скорость: без лагов при просмотре 4K-видео.
+❯ Конфиденциальность: мы не храним логи твоих действий.
+❯ Любые устройства: одна подписка на телефон, планшет и ПК.
+❯ Поддержка 24/7: всегда поможем, если что-то пойдет не так.</blockquote>
 
-> Оплачивая подписку, ты получаешь не просто доступ, а гарантию стабильности:
-> ❯ **Высокая скорость:** без лагов при просмотре 4K-видео.
-> ❯ **Конфиденциальность:** мы не храним логи твоих действий.
-> ❯ **Любые устройства:** одна подписка на телефон, планшет и ПК.
-> ❯ **Поддержка 24/7:** всегда поможем, если что-то пойдет не так.
+Выбери подходящий период и жми кнопку оплаты ниже:"""
 
-**Выбери подходящий период и жми кнопку оплаты ниже:**"""
+SUBSCRIPTION_ACTIVE = """<b>Твоя подписка Legit VPN активирована! ✅</b>
 
-SUBSCRIPTION_ACTIVATED = """**Твоя подписка Legit VPN активирована.** Теперь все ограничения сняты, а скорость на максимуме.
+Теперь все ограничения сняты, а скорость на максимуме.
 
-**Статус подписки:** Активна
-**Срок действия:** до `{date}`
+<b>Статус подписки:</b> <code>Активна</code>
+<b>Срок действия:</b> до <code>{date}</code>
 
-`{link}`
+<code>{key_link}</code>
 
 Спасибо, что выбрали нас!"""
 
-ACCOUNT_MESSAGE = """**Ваш ID:** `{telegram_id}`
+ACCOUNT_INFO = """<b>📱 Твой аккаунт Legit VPN</b>
 
-**Баланс:** {balance}Б
-**Подписка активна до:** `{expire_date}`
-**Дней до конца подписки:** `{days_left}`"""
+<b>Ваш ID:</b> <code>{user_id}</code>
+<b>Баланс:</b> <code>{balance}Б</code>
+<b>Подписка активна до:</b> <code>{date}</code>
+<b>Дней до конца подписки:</b> <code>{days_left}</code>"""
 
-UPDATE_KEYS_CONFIRM = """**Внимание❗️**
+REFERRAL_MESSAGE = """<b>Приглашай друзей — пользуйся Legit VPN бесплатно!</b>
+
+За каждого активного приглашенного пользователя мы начисляем <code>10 баллов</code> на твой баланс. Копи баллы и оплачивай ими подписку на любой срок.
+
+<b>Твоя ссылка:</b> <code>{referral_link}</code>
+
+<i>За накрутку — блокировка реферальной программы!</i>"""
+
+KEYS_RESET = """<b>✨ Все устройства удалены!</b>
+
+Ваш новый ключ:
+<code>{subscription_link}</code>"""
+
+RESET_WARNING = """<b>Внимание❗️</b>
 
 Это действие удалит доступ на всех ваших текущих устройствах. Вам придется настраивать их заново по новой ссылке.
 
-**Вы уверены?**"""
+<b>Вы уверены?</b>"""
 
-UPDATE_KEYS_SUCCESS = """**Все устройства удалены.** Ваш новый ключ:
+# ========== USER HANDLERS ==========
 
-`{}`
-
-Приятного пользования!"""
-
-REFERRAL_MESSAGE = """**Приглашай друзей — пользуйся Legit VPN бесплатно!** 
-
-За каждого активного приглашенного пользователя мы начисляем `10 баллов` на твой баланс. Копи баллы и оплачивай ими подписку на любой срок.
-
-**Твоя ссылка:**
-`{}`
-
-**За накрутку — блокировка реферальной программы!**"""
-
-HELP_MESSAGE = """**Выберете нужный пункт меню.**"""
-
-# Handlers for user commands
 @user_router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, command: CommandStart):
     """Start command handler with referral support"""
-    try:
-        async with AsyncSessionLocal() as session:
+    async with AsyncSessionLocal() as session:
+        try:
             user = await get_or_create_user(session, message.from_user.id, message.from_user.username or str(message.from_user.id))
             
             # Handle referral link
             if command.args and command.args.startswith("ref_"):
                 try:
                     referrer_id = int(command.args.replace("ref_", ""))
-                    if referrer_id != message.from_user.id:
-                        # Check if referral already exists
-                        existing_ref = await session.execute(
-                            select(Referral).where(
-                                (Referral.referrer_telegram_id == referrer_id) &
-                                (Referral.referred_telegram_id == message.from_user.id)
-                            )
-                        )
-                        if not existing_ref.scalar_one_or_none():
-                            await create_referral(session, referrer_id, str(referrer_id), message.from_user.id, str(message.from_user.id))
-                except ValueError:
-                    pass
-        
-        await message.answer(START_MESSAGE, parse_mode="Markdown", reply_markup=get_start_keyboard())
-    except Exception as e:
-        logger.error(f"Error in cmd_start: {e}")
-        await message.answer("❌ Ошибка при инициализации бота. Пожалуйста, попробуйте позже.")
-
+                    await create_referral(session, message.from_user.id, referrer_id)
+                except Exception as e:
+                    logger.warning(f"Failed to process referral: {e}")
+            
+            await message.answer(START_MESSAGE, parse_mode="HTML", reply_markup=get_main_keyboard())
+            
+        except Exception as e:
+            logger.error(f"Error in start command: {e}")
+            await message.answer("❌ Ошибка при запуске. Попробуйте позже.")
 
 @user_router.message(Command("account"))
 async def cmd_account(message: Message):
     """Account command handler"""
     async with AsyncSessionLocal() as session:
-        user = await get_or_create_user(session, message.from_user.id, message.from_user.username or str(message.from_user.id))
-        subscription = await get_active_subscription(session, message.from_user.id)
-        
-        if subscription:
-            days_left = days_until(subscription.expire_date)
-            expire_date = format_date(subscription.expire_date)
-        else:
-            days_left = 0
-            expire_date = "Нет активной подписки"
-        
-        account_text = ACCOUNT_MESSAGE.format(
-            telegram_id=message.from_user.id,
-            balance=user.balance_points,
-            expire_date=expire_date,
-            days_left=days_left
-        )
-        
-        keyboard = get_account_keyboard(subscription is not None)
-        await message.answer(account_text, parse_mode="Markdown", reply_markup=keyboard)
+        try:
+            user = await get_or_create_user(session, message.from_user.id, message.from_user.username or str(message.from_user.id))
+            sub = await get_active_subscription(session, message.from_user.id)
+            
+            if sub:
+                days_left = (sub.expired_at - datetime.utcnow()).days
+                text = ACCOUNT_INFO.format(
+                    user_id=message.from_user.id,
+                    balance=user.balance,
+                    date=sub.expired_at.strftime("%d.%m.%Y"),
+                    days_left=max(0, days_left)
+                )
+            else:
+                text = f"""<b>📱 Твой аккаунт Legit VPN</b>
 
+<b>Ваш ID:</b> <code>{message.from_user.id}</code>
+<b>Баланс:</b> <code>{user.balance}Б</code>
+<b>Подписка:</b> <code>Неактивна</code>"""
+            
+            await message.answer(text, parse_mode="HTML", reply_markup=get_main_keyboard())
+            
+        except Exception as e:
+            logger.error(f"Error in account command: {e}")
+            await message.answer("❌ Ошибка при получении информации аккаунта.")
 
 @user_router.message(Command("pay"))
 async def cmd_pay(message: Message):
     """Pay command handler"""
-    await message.answer(PAYMENT_MENU, parse_mode="Markdown", reply_markup=get_payment_method_keyboard())
-
+    await message.answer(SUBSCRIPTION_MENU, parse_mode="HTML", reply_markup=get_subscription_keyboard())
 
 @user_router.message(Command("help"))
 async def cmd_help(message: Message):
     """Help command handler"""
-    await message.answer(HELP_MESSAGE, parse_mode="Markdown", reply_markup=get_help_keyboard())
+    help_text = """<b>📚 Справка - Legit VPN</b>
 
+<b>Доступные команды:</b>
+/start - Главное меню
+/account - Информация о вашем аккаунте
+/pay - Выбрать подписку
+/update_keys - Обновить ключи доступа
+/help - Справка
+/ref - Ваша реферальная ссылка
+
+<b>Поддержка:</b>
+Свяжитесь с нами в чате поддержки."""
+    
+    await message.answer(help_text, parse_mode="HTML", reply_markup=get_main_keyboard())
 
 @user_router.message(Command("update_keys"))
 async def cmd_update_keys(message: Message):
     """Update keys command handler"""
-    async with AsyncSessionLocal() as session:
-        subscription = await get_active_subscription(session, message.from_user.id)
-        
-        if not subscription:
-            await message.answer("❌ У вас нет активной подписки.")
-            return
-        
-        await message.answer(UPDATE_KEYS_CONFIRM, parse_mode="Markdown", reply_markup=get_update_keys_keyboard())
+    await message.answer(RESET_WARNING, parse_mode="HTML", reply_markup=get_reset_confirmation_keyboard())
 
+# ========== TRIAL CALLBACKS ==========
 
-# Callback handlers
-@user_router.callback_query(F.data == "trial_start")
-async def trial_start(callback: CallbackQuery):
-    """Start trial period"""
-    try:
+@user_router.callback_query(F.data == "trial_vip")
+async def trial_vip(callback: CallbackQuery):
+    """Trial VIP subscription"""
+    if not is_admin(callback.from_user.id):
         async with AsyncSessionLocal() as session:
-            user = await get_or_create_user(session, callback.from_user.id, callback.from_user.username or str(callback.from_user.id))
-            
-            async with MarzneshinAPI() as api:
-                # Create user in Marzneshin
-                user_data = await api.create_user(callback.from_user.id, subscription_days=3)
-                username = user_data.get('username')
-                
-                # Create subscription in database
-                subscription = await create_subscription(session, callback.from_user.id, username, days=3)
-                
-                # Update user subscription key
-                user.subscription_key = subscription.subscription_key
-                await session.commit()
-                
-                # Get subscription link
-                subscription_link = f"{MARZNESHIN_API_URL}/sub/{username}/{subscription.subscription_key}"
-                
-                trial_text = TRIAL_STARTED.format(subscription_link)
-                await callback.message.edit_text(trial_text, parse_mode="Markdown", reply_markup=get_subscription_confirmation_keyboard())
-                
-    except Exception as e:
-        logger.error(f"Error in trial_start: {e}")
-        error_msg = str(e)[:100]  # Limit error message length
-        await callback.answer(f"❌ Ошибка: {error_msg}", show_alert=True)
-
-
-@user_router.callback_query(F.data == "subscribe_menu")
-async def subscribe_menu(callback: CallbackQuery):
-    """Show payment methods"""
-    await callback.message.edit_text(PAYMENT_MENU, parse_mode="Markdown", reply_markup=get_payment_method_keyboard())
-
-
-@user_router.callback_query(F.data.in_(["pay_points", "pay_card", "pay_sbp", "pay_stars"]))
-async def select_payment_method(callback: CallbackQuery, state: FSMContext):
-    """Select payment method and show subscription plans"""
-    try:
-        method = callback.data
-        await state.update_data(payment_method=method)
-        
-        await callback.message.edit_text(SUBSCRIPTION_MENU, parse_mode="Markdown", reply_markup=get_subscription_plans_keyboard(method))
-    except Exception as e:
-        logger.error(f"Error in select_payment_method: {e}")
-        await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
-
-
-@user_router.callback_query(F.data.startswith("sub_"))
-async def process_subscription(callback: CallbackQuery, state: FSMContext):
-    """Process subscription purchase"""
-    try:
-        data = await state.get_data()
-        payment_method = data.get("payment_method", "pay_card")
-        
-        # Parse subscription data
-        parts = callback.data.split("_")
-        duration_str = parts[1]  # 1m, 3m, etc
-        
-        duration_map = {"1m": 1, "3m": 3, "6m": 6, "12m": 12}
-        months = duration_map.get(duration_str, 1)
-        days = months * 30
-        
-        # Get prices based on duration
-        price_map = {
-            "1m": 99, "3m": 279, "6m": 579, "12m": 999,
-        }
-        price = price_map.get(duration_str, 99)
-        
-        async with AsyncSessionLocal() as session:
-            user = await get_or_create_user(session, callback.from_user.id, callback.from_user.username or str(callback.from_user.id))
-            
-            # Special handling for points payment
-            if payment_method == "pay_points":
-                if user.balance_points < price:
-                    await callback.answer(f"❌ Недостаточно баллов. У вас {user.balance_points}, а нужно {price}", show_alert=True)
-                    return
-                
-                # Spend points
-                await spend_points(session, callback.from_user.id, price)
-            
             try:
+                user = await get_or_create_user(session, callback.from_user.id, callback.from_user.username or str(callback.from_user.id))
+                
                 async with MarzneshinAPI() as api:
-                    # Create or update user in Marzneshin
-                    existing_sub = await get_active_subscription(session, callback.from_user.id)
-                    
-                    if existing_sub:
-                        # Delete old user
-                        try:
-                            await api.delete_user(existing_sub.username)
-                        except:
-                            pass
-                        # Mark subscription as inactive
-                        existing_sub.is_active = False
-                        await session.commit()
-                    
-                    # Create new user
-                    user_data = await api.create_user(callback.from_user.id, subscription_days=days)
+                    user_data = await api.create_user(callback.from_user.id, subscription_days=3)
                     username = user_data.get('username')
                     
-                    # Create new subscription
-                    subscription = await create_subscription(session, callback.from_user.id, username, days=days)
-                    user.subscription_key = subscription.subscription_key
-                    await session.commit()
+                    await create_subscription(session, callback.from_user.id, username, days=3)
                     
-                    # Record payment
-                    await record_payment(session, callback.from_user.id, username, float(price), payment_method, days)
-                    
-                    # Get subscription link
-                    subscription_link = f"{MARZNESHIN_API_URL}/sub/{username}/{subscription.subscription_key}"
-                    
-                    expire_date = format_date(subscription.expire_date)
-                    activation_text = SUBSCRIPTION_ACTIVATED.format(date=expire_date, link=subscription_link)
-                    
-                    await callback.message.edit_text(activation_text, parse_mode="Markdown", reply_markup=get_subscription_confirmation_keyboard())
+                    key_link = f"{MARZNESHIN_API_URL}/user/{username}"
+                    await callback.message.answer(
+                        TRIAL_STARTED.format(key_link),
+                        parse_mode="HTML",
+                        reply_markup=get_main_keyboard()
+                    )
                     
             except Exception as e:
-                logger.error(f"Error creating subscription: {e}")
-                error_text = str(e)[:80]
-                await callback.answer(f"❌ Ошибка: {error_text}", show_alert=True)
-                return
-    except Exception as e:
-        logger.error(f"Error in process_subscription: {e}")
-        error_text = str(e)[:80]
-        await callback.answer(f"❌ Ошибка: {error_text}", show_alert=True)
+                error = str(e)[:80]
+                await callback.answer(f"❌ Ошибка: {error}", show_alert=True)
 
-
-@user_router.callback_query(F.data == "account")
-async def account_callback(callback: CallbackQuery):
-    """Account button callback"""
-    async with AsyncSessionLocal() as session:
-        user = await get_or_create_user(session, callback.from_user.id, callback.from_user.username or str(callback.from_user.id))
-        subscription = await get_active_subscription(session, callback.from_user.id)
-        
-        if subscription:
-            days_left = days_until(subscription.expire_date)
-            expire_date = format_date(subscription.expire_date)
-        else:
-            days_left = 0
-            expire_date = "Нет активной подписки"
-        
-        account_text = ACCOUNT_MESSAGE.format(
-            telegram_id=callback.from_user.id,
-            balance=user.balance_points,
-            expire_date=expire_date,
-            days_left=days_left
-        )
-        
-        keyboard = get_account_keyboard(subscription is not None)
-        await callback.message.edit_text(account_text, parse_mode="Markdown", reply_markup=keyboard)
-
-
-@user_router.callback_query(F.data == "referral")
-async def referral_callback(callback: CallbackQuery):
-    """Referral program"""
-    referral_link = f"https://t.me/your_bot_username?start=ref_{callback.from_user.id}"
-    referral_text = REFERRAL_MESSAGE.format(referral_link)
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_account")]
-    ])
-    
-    await callback.message.edit_text(referral_text, parse_mode="Markdown", reply_markup=keyboard)
-
-
-@user_router.callback_query(F.data == "delete_keys")
-async def delete_keys_callback(callback: CallbackQuery):
-    """Delete keys from devices"""
-    await callback.message.edit_text(UPDATE_KEYS_CONFIRM, parse_mode="Markdown", reply_markup=get_update_keys_keyboard())
-
-
-@user_router.callback_query(F.data == "confirm_update_keys")
-async def confirm_update_keys(callback: CallbackQuery):
-    """Confirm update keys"""
+@user_router.callback_query(F.data.startswith("buy_"))
+async def buy_subscription(callback: CallbackQuery):
+    """Buy subscription"""
     try:
+        days = int(callback.data.split("_")[1])
+        
         async with AsyncSessionLocal() as session:
-            subscription = await get_active_subscription(session, callback.from_user.id)
-            
-            if not subscription:
-                await callback.answer("❌ Подписка не найдена", show_alert=True)
-                return
-            
-            days_remaining = days_until(subscription.expire_date)
+            user = await get_or_create_user(session, callback.from_user.id, callback.from_user.username or str(callback.from_user.id))
             
             async with MarzneshinAPI() as api:
-                # Revoke old subscription
-                await api.revoke_user_subscription(subscription.username)
+                user_data = await api.create_user(callback.from_user.id, subscription_days=days)
+                username = user_data.get('username')
                 
-                # Create new user
-                user_data = await api.create_user(callback.from_user.id, subscription_days=max(1, days_remaining))
-                new_username = user_data.get('username')
+                await create_subscription(session, callback.from_user.id, username, days=days)
                 
-                # Create new subscription
-                new_subscription = await create_subscription(session, callback.from_user.id, new_username, days=max(1, days_remaining))
+                key_link = f"{MARZNESHIN_API_URL}/user/{username}"
+                await callback.message.answer(
+                    SUBSCRIPTION_ACTIVE.format(
+                        date=(datetime.utcnow() + timedelta(days=days)).strftime("%d.%m.%Y"),
+                        key_link=key_link
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=get_main_keyboard()
+                )
                 
-                # Update user subscription key
-                user = await get_or_create_user(session, callback.from_user.id, callback.from_user.username or str(callback.from_user.id))
-                user.subscription_key = new_subscription.subscription_key
+    except Exception as e:
+        error = str(e)[:80]
+        await callback.answer(f"❌ Ошибка: {error}", show_alert=True)
+
+@user_router.callback_query(F.data == "reset_keys_confirm")
+async def reset_keys_confirm(callback: CallbackQuery):
+    """Confirm reset keys"""
+    async with AsyncSessionLocal() as session:
+        try:
+            user = await get_or_create_user(session, callback.from_user.id, callback.from_user.username or str(callback.from_user.id))
+            
+            async with MarzneshinAPI() as api:
+                # Delete old subscription
+                old_sub = await get_active_subscription(session, callback.from_user.id)
+                if old_sub:
+                    await api.delete_user(old_sub.marzneshin_username)
                 
-                # Mark old subscription as inactive
-                subscription.is_active = False
+                # Create new one
+                user_data = await api.create_user(callback.from_user.id, subscription_days=30)
+                username = user_data.get('username')
+                
+                # Update DB
+                if old_sub:
+                    old_sub.marzneshin_username = username
+                    old_sub.status = "active"
+                else:
+                    await create_subscription(session, callback.from_user.id, username, days=30)
+                
                 await session.commit()
                 
-                # Get new subscription link
-                subscription_link = f"{MARZNESHIN_API_URL}/sub/{new_username}/{new_subscription.subscription_key}"
+                key_link = f"{MARZNESHIN_API_URL}/user/{username}"
+                await callback.message.answer(
+                    KEYS_RESET.format(subscription_link=key_link),
+                    parse_mode="HTML",
+                    reply_markup=get_main_keyboard()
+                )
                 
-                update_text = UPDATE_KEYS_SUCCESS.format(subscription_link)
-                keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_account")]
-                ])
-                
-                await callback.message.edit_text(update_text, parse_mode="Markdown", reply_markup=keyboard)
-    except Exception as e:
-        logger.error(f"Error in confirm_update_keys: {e}")
-        await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
+        except Exception as e:
+            error = str(e)[:80]
+            await callback.answer(f"❌ Ошибка: {error}", show_alert=True)
 
+# ========== ADMIN HANDLERS ==========
 
-@user_router.callback_query(F.data.in_(["back_to_account", "back_to_start"]))
-async def back_buttons(callback: CallbackQuery, state: FSMContext):
-    """Back buttons navigation"""
-    try:
-        if callback.data == "back_to_account":
-            await account_callback(callback)
-        else:
-            await callback.message.edit_text(START_MESSAGE, parse_mode="Markdown", reply_markup=get_start_keyboard())
-    except Exception as e:
-        logger.error(f"Error in back_buttons: {e}")
-        await callback.answer("❌ Ошибка навигации", show_alert=True)
-
-
-@user_router.callback_query(F.data == "help_menu")
-async def help_menu_callback(callback: CallbackQuery):
-    """Help menu"""
-    await callback.message.edit_text(HELP_MESSAGE, parse_mode="Markdown", reply_markup=get_help_keyboard())
-
-
-@user_router.callback_query(F.data == "instructions")
-async def instructions_callback(callback: CallbackQuery):
-    """Instructions (placeholder)"""
-    instructions_text = """**📖 Инструкция по использованию VPN**
-
-Инструкция будет добавлена позже."""
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="account")]
-    ])
-    
-    await callback.message.edit_text(instructions_text, parse_mode="Markdown", reply_markup=keyboard)
-
-
-@user_router.callback_query(F.data == "help_vpn_broken")
-async def help_vpn_broken(callback: CallbackQuery):
-    """Help: VPN not working"""
-    help_text = """**🔗 VPN не работает**
-
-Статья с решением будет добавлена позже.
-
-Если проблема персистирует, обратитесь в техподдержку."""
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📞 Техподдержка", url="https://t.me/vpnsakura")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="help_menu")]
-    ])
-    
-    await callback.message.edit_text(help_text, parse_mode="Markdown", reply_markup=keyboard)
-
-
-@user_router.callback_query(F.data == "stars_unavailable")
-async def stars_unavailable(callback: CallbackQuery):
-    """Telegram Stars unavailable"""
-    await callback.answer("⭐ Telegram Stars будут доступны в ближайщем обновлении", show_alert=True)
-
-
-# Admin handlers
 @admin_router.message(Command("admin"))
 async def cmd_admin(message: Message):
-    """Admin panel command"""
+    """Admin panel (only for admins, hidden from regular users)"""
     if not is_admin(message.from_user.id):
-        await message.answer("❌ У вас нет доступа к администраторской панели.")
         return
     
-    admin_text = """**🔧 Администраторская панель Legit VPN**
+    admin_text = """<b>🔧 Администраторская панель Legit VPN</b>
 
 Выберите действие:"""
     
-    await message.answer(admin_text, parse_mode="Markdown", reply_markup=get_admin_main_keyboard())
-
-
-@admin_router.callback_query(F.data == "admin_users")
-async def admin_users(callback: CallbackQuery):
-    """Admin: Users management"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
-    
-    await callback.message.edit_text("**👥 Управление пользователями**", parse_mode="Markdown", reply_markup=get_admin_users_keyboard())
-
-
-@admin_router.callback_query(F.data == "admin_list_users")
-async def admin_list_users(callback: CallbackQuery):
-    """Admin: List all users"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
-    
-    try:
-        async with MarzneshinAPI() as api:
-            users = await api.get_users_list(page=1, size=10)
-            
-            users_list = users.get('items', [])[:5]
-            text = "**📋 Список пользователей (последние 5):**\n\n"
-            
-            for user in users_list:
-                text += f"👤 {user.get('username')}\n"
-            
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_users")]
-            ])
-            
-            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
-            
-    except Exception as e:
-        await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
-
+    await message.answer(admin_text, parse_mode="HTML", reply_markup=get_admin_main_keyboard())
 
 @admin_router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):
@@ -508,187 +294,362 @@ async def admin_stats(callback: CallbackQuery):
         return
     
     try:
-        async with MarzneshinAPI() as api:
-            stats = await api.get_system_stats()
+        async with AsyncSessionLocal() as session:
+            # Get stats from database
+            total_users = await session.scalar(select(func.count(User.id)))
+            active_subs = await session.scalar(
+                select(func.count(Subscription.id)).where(Subscription.status == "active")
+            )
+            total_payments = await session.scalar(
+                select(func.sum(Payment.amount)).where(Payment.status == "completed")
+            ) or 0
             
-            users_stats = stats.get('users', {})
-            nodes_stats = stats.get('nodes', {})
-            
-            text = f"""**📈 Статистика системы**
+            text = f"""<b>📈 Статистика системы</b>
 
-👥 **Пользователи:**
-  • Всего: {users_stats.get('total', 0)}
-  • Активных: {users_stats.get('active', 0)}
-  • Онлайн: {users_stats.get('online', 0)}
+👥 <b>Пользователи:</b>
+  • Всего: <code>{total_users}</code>
 
-🌐 **Ноды:**
-  • Всего: {nodes_stats.get('total', 0)}
-  • Здоровые: {nodes_stats.get('healthy', 0)}
-  • Нездоровые: {nodes_stats.get('unhealthy', 0)}"""
+💳 <b>Подписки:</b>
+  • Активных: <code>{active_subs}</code>
+
+💰 <b>Платежи:</b>
+  • Сумма: <code>{total_payments}₽</code>"""
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")]
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_main")]
             ])
             
-            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
             
     except Exception as e:
-        logger.error(f"Error in admin_stats: {e}")
-        await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
+        await callback.answer(f"❌ Ошибка: {str(e)[:80]}", show_alert=True)
 
+@admin_router.callback_query(F.data == "admin_users")
+async def admin_users_menu(callback: CallbackQuery):
+    """Admin: Users management menu"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    text = """<b>👥 Управление пользователями</b>
 
-@admin_router.callback_query(F.data == "admin_payments")
-async def admin_payments(callback: CallbackQuery):
-    """Admin: View payment statistics"""
+Выберите действие:"""
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Поиск пользователя", callback_data="admin_search_user")],
+        [InlineKeyboardButton(text="📋 Все пользователи", callback_data="admin_list_all")],
+        [InlineKeyboardButton(text="➕ Создать пользователя", callback_data="admin_create_user")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_main")]
+    ])
+    
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+@admin_router.callback_query(F.data == "admin_list_all")
+async def admin_list_users(callback: CallbackQuery):
+    """Admin: List all users"""
     if not is_admin(callback.from_user.id):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
     
     try:
         async with AsyncSessionLocal() as session:
-            # Get recent payments
-            result = await session.execute(
-                select(Payment).order_by(Payment.created_at.desc()).limit(5)
-            )
-            payments = result.scalars().all()
-            
-            text = "**💰 Последние платежи:**\n\n"
-            
-            for payment in payments:
-                text += f"👤 {payment.username}\n"
-                text += f"💵 {payment.amount} ({payment.payment_method})\n"
-                text += f"📅 {format_datetime(payment.created_at)}\n"
-                text += f"✅ {payment.status}\n\n"
-            
-            if not payments:
-                text = "**💰 Платежи**\n\nНет записей"
-            
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")]
-            ])
-            
-            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
-    except Exception as e:
-        logger.error(f"Error in admin_payments: {e}")
-        await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
-
-
-@admin_router.callback_query(F.data == "admin_points")
-async def admin_points(callback: CallbackQuery):
-    """Admin: Points system"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
-    
-    try:
-        async with AsyncSessionLocal() as session:
-            # Get users with maximum points
-            result = await session.execute(
-                select(User).order_by(User.balance_points.desc()).limit(5)
-            )
+            query = select(User).limit(20)
+            result = await session.execute(query)
             users = result.scalars().all()
             
-            text = "**📊 Система баллов**\n\n**Топ пользователей по баллам:**\n\n"
-            
-            for i, user in enumerate(users, 1):
-                text += f"{i}. 👤 {user.username}: `{user.balance_points}Б`\n"
-            
-            if not users:
-                text = "**📊 Система баллов**\n\nНет пользователей"
+            text = """<b>📋 Последние 20 пользователей:</b>\n\n"""
+            for u in users:
+                text += f"👤 ID: <code>{u.telegram_id}</code> | Баланс: <code>{u.balance}Б</code>\n"
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")]
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_users")]
             ])
             
-            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=keyboard)
+            await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+            
     except Exception as e:
-        logger.error(f"Error in admin_points: {e}")
-        await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
+        await callback.answer(f"❌ Ошибка: {str(e)[:80]}", show_alert=True)
 
+@admin_router.callback_query(F.data == "admin_search_user")
+async def admin_search_user(callback: CallbackQuery, state: FSMContext):
+    """Admin: Search user"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await state.set_state(AdminStates.wait_user_id)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_users")]
+    ])
+    
+    await callback.message.edit_text(
+        "<b>🔍 Введите ID пользователя:</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+@admin_router.message(AdminStates.wait_user_id)
+async def admin_search_user_result(message: Message, state: FSMContext):
+    """Process user search"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    try:
+        user_id = int(message.text)
+        
+        async with AsyncSessionLocal() as session:
+            user = await session.get(User, user_id)
+            
+            if not user:
+                await message.answer("❌ Пользователь не найден")
+                await state.clear()
+                return
+            
+            sub = await get_active_subscription(session, user_id)
+            
+            text = f"""<b>👤 Информация о пользователе</b>
+
+<b>ID:</b> <code>{user.telegram_id}</code>
+<b>Username:</b> {user.username or "—"}
+<b>Баланс:</b> <code>{user.balance}Б</code>
+<b>Присоединился:</b> <code>{user.created_at.strftime('%d.%m.%Y')}</code>"""
+            
+            if sub:
+                days_left = (sub.expired_at - datetime.utcnow()).days
+                text += f"""
+<b>Подписка:</b> <code>Активна</code>
+<b>Username в системе:</b> <code>{sub.marzneshin_username}</code>
+<b>Дней осталось:</b> <code>{max(0, days_left)}</code>"""
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⏱️ Продлить", callback_data=f"admin_extend_{user_id}")],
+                [InlineKeyboardButton(text="🚫 Аннулировать", callback_data=f"admin_revoke_{user_id}")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_users")]
+            ])
+            
+            await message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+            await state.clear()
+            
+    except ValueError:
+        await message.answer("❌ Введите корректный ID")
+
+@admin_router.callback_query(F.data.startswith("admin_extend_"))
+async def admin_extend_user(callback: CallbackQuery, state: FSMContext):
+    """Admin: Extend subscription"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    user_id = int(callback.data.split("_")[2])
+    await state.update_data(extend_user_id=user_id)
+    await state.set_state(AdminStates.wait_extend_days)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_users")]
+    ])
+    
+    await callback.message.edit_text(
+        f"<b>⏱️ На сколько дней продлить подписку\nпользователю <code>{user_id}</code>?</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+@admin_router.message(AdminStates.wait_extend_days)
+async def admin_extend_process(message: Message, state: FSMContext):
+    """Process extend subscription"""
+    if not is_admin(message.from_user.id):
+        return
+    
+    try:
+        days = int(message.text)
+        data = await state.get_data()
+        user_id = data.get("extend_user_id")
+        
+        async with AsyncSessionLocal() as session:
+            sub = await get_active_subscription(session, user_id)
+            
+            if not sub:
+                await message.answer("❌ Активная подписка не найдена")
+                await state.clear()
+                return
+            
+            async with MarzneshinAPI() as api:
+                new_expire = sub.expired_at + timedelta(days=days)
+                await api.modify_user(sub.marzneshin_username, days)
+                
+                sub.expired_at = new_expire
+                await session.commit()
+            
+            await message.answer(
+                f"✅ Подписка продлена на <code>{days} дней</code>\n\n"
+                f"Новая дата истечения: <code>{new_expire.strftime('%d.%m.%Y')}</code>",
+                parse_mode="HTML"
+            )
+            await state.clear()
+            
+    except ValueError:
+        await message.answer("❌ Введите число")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)[:80]}")
+        await state.clear()
+
+@admin_router.callback_query(F.data.startswith("admin_revoke_"))
+async def admin_revoke_subscription(callback: CallbackQuery):
+    """Admin: Revoke subscription"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    user_id = int(callback.data.split("_")[2])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"admin_revoke_confirm_{user_id}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_users")]
+    ])
+    
+    await callback.message.edit_text(
+        f"<b>🚫 Вы уверены, что хотите аннулировать\nподписку пользователя <code>{user_id}</code>?</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+@admin_router.callback_query(F.data.startswith("admin_revoke_confirm_"))
+async def admin_revoke_confirm(callback: CallbackQuery):
+    """Admin: Confirm revoke subscription"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    user_id = int(callback.data.split("_")[3])
+    
+    try:
+        async with AsyncSessionLocal() as session:
+            sub = await get_active_subscription(session, user_id)
+            
+            if sub:
+                async with MarzneshinAPI() as api:
+                    await api.delete_user(sub.marzneshin_username)
+                
+                sub.status = "revoked"
+                await session.commit()
+            
+            await callback.message.edit_text("✅ Подписка аннулирована", parse_mode="HTML")
+            
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка: {str(e)[:80]}", show_alert=True)
 
 @admin_router.callback_query(F.data == "admin_create_user")
-async def admin_create_user(callback: CallbackQuery):
+async def admin_create_user(callback: CallbackQuery, state: FSMContext):
     """Admin: Create new user"""
     if not is_admin(callback.from_user.id):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
     
+    await state.set_state(AdminStates.wait_user_id)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_users")]
+    ])
+    
     await callback.message.edit_text(
-        "**➕ Создание пользователя**\n\nОтправьте username нового пользователя:",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="admin_menu")]])
+        "<b>➕ Введите ID для создания пользователя:</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
     )
 
-
-@admin_router.callback_query(F.data == "admin_resync_nodes")
-async def admin_resync_nodes(callback: CallbackQuery):
-    """Admin: Resync nodes"""
+@admin_router.callback_query(F.data == "admin_points")
+async def admin_points_menu(callback: CallbackQuery):
+    """Admin: Points management"""
     if not is_admin(callback.from_user.id):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
     
-    await callback.answer("♻️ Пересинхронизация нодов началась...", show_alert=True)
+    text = """<b>💰 Начисление баллов</b>
+
+Введите ID пользователя:"""
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_main")]
+    ])
+    
+    await callback.message.edit_text(text, parse_mode="HTML", reply_markup=keyboard)
+
+@admin_router.callback_query(F.data == "admin_notify")
+async def admin_notify_menu(callback: CallbackQuery, state: FSMContext):
+    """Admin: Notify all users"""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    await state.set_state(AdminStates.wait_notification_text)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_main")]
+    ])
+    
+    await callback.message.edit_text(
+        "<b>📢 Введите текст уведомления для всех пользователей:</b>",
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
+@admin_router.message(AdminStates.wait_notification_text)
+async def admin_notify_send(message: Message, state: FSMContext):
+    """Send notification to all users"""
+    if not is_admin(message.from_user.id):
+        return
     
     try:
-        async with MarzneshinAPI() as api:
-            # Get all inbounds
-            response = await api.client.get(
-                f"{api.api_url}/api/inbounds",
-                headers=api._get_headers()
-            )
-            response.raise_for_status()
-            inbounds = response.json().get('items', [])
+        async with AsyncSessionLocal() as session:
+            from aiogram import Bot
+            bot = Bot(token=os.getenv("BOT_TOKEN"))
             
-            for inbound in inbounds:
-                node_id = inbound.get('node', {}).get('id')
-                if node_id:
-                    try:
-                        resync_response = await api.client.post(
-                            f"{api.api_url}/api/nodes/{node_id}/resync",
-                            headers=api._get_headers()
-                        )
-                        resync_response.raise_for_status()
-                    except:
-                        pass
-        
-        await callback.message.edit_text(
-            "✅ **Ноды успешно пересинхронизированы!**",
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_service")]])
-        )
-        
+            query = select(User)
+            result = await session.execute(query)
+            users = result.scalars().all()
+            
+            sent = 0
+            failed = 0
+            
+            for user in users:
+                try:
+                    await bot.send_message(
+                        user.telegram_id,
+                        f"<b>📢 Уведомление от администрации:</b>\n\n{message.text}",
+                        parse_mode="HTML"
+                    )
+                    sent += 1
+                except:
+                    failed += 1
+            
+            await message.answer(
+                f"✅ Уведомление отправлено\n\n"
+                f"✓ Успешно: <code>{sent}</code>\n"
+                f"✗ Ошибок: <code>{failed}</code>",
+                parse_mode="HTML"
+            )
+            await state.clear()
+            
     except Exception as e:
-        logger.error(f"Error in admin_resync_nodes: {e}")
-        await callback.answer(f"❌ Ошибка: {str(e)}", show_alert=True)
+        await message.answer(f"❌ Ошибка: {str(e)[:80]}")
+        await state.clear()
 
-
-@admin_router.callback_query(F.data == "admin_menu")
-async def admin_menu(callback: CallbackQuery):
-    """Admin main menu"""
+@admin_router.callback_query(F.data == "admin_main")
+async def admin_back_main(callback: CallbackQuery):
+    """Admin: Back to main menu"""
     if not is_admin(callback.from_user.id):
         await callback.answer("❌ Нет доступа", show_alert=True)
         return
     
-    admin_text = """**🔧 Администраторская панель Legit VPN**
+    admin_text = """<b>🔧 Администраторская панель Legit VPN</b>
 
 Выберите действие:"""
     
-    await callback.message.edit_text(admin_text, parse_mode="Markdown", reply_markup=get_admin_main_keyboard())
+    await callback.message.edit_text(admin_text, parse_mode="HTML", reply_markup=get_admin_main_keyboard())
 
-
-@admin_router.callback_query(F.data == "admin_service")
-async def admin_service(callback: CallbackQuery):
-    """Admin: Service management"""
-    if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
-    
-    await callback.message.edit_text("**🔧 Управление сервисом**", parse_mode="Markdown", reply_markup=get_admin_service_keyboard())
-
-
-@user_router.message(F.text.startswith("/"))
-async def commands_handler(message: Message):
-    """Show command suggestions"""
-    if message.text == "/:":
-        commands_text = get_command_suggestions()
-        await message.answer(f"**💡 Доступные команды:**\n{commands_text}", parse_mode="Markdown")
+# Default handler for unknown commands
+@user_router.message()
+async def default_handler(message: Message):
+    """Default handler for any other message"""
+    pass

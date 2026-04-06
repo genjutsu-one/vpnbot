@@ -1,169 +1,73 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 
-# User keyboards
-def get_start_keyboard():
-    """Main start keyboard"""
+# ========== USER KEYBOARDS ==========
+
+def get_main_keyboard():
+    """Main menu keyboard"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🎉 Пробный период", callback_data="trial_start"),
-            InlineKeyboardButton(text="💳 Оформить подписку", callback_data="subscribe_menu")
+            InlineKeyboardButton(text="🎉 Пробный период", callback_data="trial_vip"),
+            InlineKeyboardButton(text="💳 Подписка", callback_data="buy_menu")
+        ],
+        [
+            InlineKeyboardButton(text="👤 Аккаунт", callback_data="account_menu"),
+            InlineKeyboardButton(text="🎁 Реферралы", callback_data="referral_menu")
+        ],
+        [
+            InlineKeyboardButton(text="🔄 Обновить ключи", callback_data="reset_keys"),
+            InlineKeyboardButton(text="❓ Помощь", callback_data="help_menu")
         ]
     ])
     return keyboard
 
-
-def get_payment_method_keyboard():
-    """Payment method selection"""
+def get_subscription_keyboard():
+    """Subscription plans keyboard"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Баллы", callback_data="pay_points")],
-        [InlineKeyboardButton(text="🏦 Банковские карты", callback_data="pay_card")],
-        [InlineKeyboardButton(text="⚡ СБП", callback_data="pay_sbp")],
-        [InlineKeyboardButton(text="⭐ Telegram Stars", callback_data="pay_stars")]
+        [InlineKeyboardButton(text="1 месяц - 99₽", callback_data="buy_30")],
+        [InlineKeyboardButton(text="3 месяца - 279₽", callback_data="buy_90")],
+        [InlineKeyboardButton(text="6 месяцев - 579₽", callback_data="buy_180")],
+        [InlineKeyboardButton(text="12 месяцев - 999₽", callback_data="buy_365")],
+        [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="back_main")]
     ])
     return keyboard
 
-
-def get_subscription_plans_keyboard(payment_method: str):
-    """Subscription plans based on payment method"""
-    if payment_method == "pay_points":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="1 месяц - 99 Б", callback_data="sub_1m_points")],
-            [InlineKeyboardButton(text="3 месяца - 279 Б", callback_data="sub_3m_points")],
-            [InlineKeyboardButton(text="6 месяцев - 579 Б", callback_data="sub_6m_points")],
-            [InlineKeyboardButton(text="12 месяцев - 999 Б", callback_data="sub_12m_points")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="subscribe_menu")]
-        ])
-    elif payment_method == "pay_card":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="1 месяц - 99₽", callback_data="sub_1m_card")],
-            [InlineKeyboardButton(text="3 месяца - 279₽", callback_data="sub_3m_card")],
-            [InlineKeyboardButton(text="6 месяцев - 579₽", callback_data="sub_6m_card")],
-            [InlineKeyboardButton(text="12 месяцев - 999₽", callback_data="sub_12m_card")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="subscribe_menu")]
-        ])
-    elif payment_method == "pay_sbp":
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="1 месяц - 99₽", callback_data="sub_1m_sbp")],
-            [InlineKeyboardButton(text="3 месяца - 279₽", callback_data="sub_3m_sbp")],
-            [InlineKeyboardButton(text="6 месяцев - 579₽", callback_data="sub_6m_sbp")],
-            [InlineKeyboardButton(text="12 месяцев - 999₽", callback_data="sub_12m_sbp")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="subscribe_menu")]
-        ])
-    else:  # stars
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⭐ Пока недоступно", callback_data="stars_unavailable")],
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="subscribe_menu")]
-        ])
-    
-    return keyboard
-
-
-def get_account_keyboard(has_active_sub: bool):
-    """Account menu keyboard"""
-    buttons = [
-        InlineKeyboardButton(text="Реферальная система", callback_data="referral"),
-    ]
-    
-    if has_active_sub:
-        buttons.append(InlineKeyboardButton(text="📥 Удалить ключи с устройств", callback_data="delete_keys"))
-    else:
-        buttons.append(InlineKeyboardButton(text="💳 Оформить подписку", callback_data="subscribe_menu"))
-    
-    buttons.append(InlineKeyboardButton(text="❓Помощь", callback_data="help_menu"))
-    
+def get_reset_confirmation_keyboard():
+    """Reset keys confirmation keyboard"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [buttons[0]],
-        [buttons[1]],
-        [buttons[2]]
+        [InlineKeyboardButton(text="✅ Да, обновить", callback_data="reset_keys_confirm")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="back_main")]
     ])
     return keyboard
 
+# ========== ADMIN KEYBOARDS ==========
 
-def get_help_keyboard():
-    """Help menu keyboard"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔗 VPN не работает", callback_data="help_vpn_broken")],
-        [InlineKeyboardButton(text="📞 Техподдержка", url="https://t.me/vpnsakura")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_account")]
-    ])
-    return keyboard
-
-
-def get_subscription_confirmation_keyboard():
-    """After subscription activation"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📖 Инструкция", callback_data="instructions")],
-        [InlineKeyboardButton(text="👤 Профиль", callback_data="account")]
-    ])
-    return keyboard
-
-
-def get_update_keys_keyboard():
-    """Update keys confirmation"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Да", callback_data="confirm_update_keys"),
-            InlineKeyboardButton(text="❌ Нет", callback_data="back_to_account")
-        ]
-    ])
-    return keyboard
-
-
-def get_extend_subscription_keyboard():
-    """Extend subscription"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Продлить подписку", callback_data="subscribe_menu")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="start")]
-    ])
-    return keyboard
-
-
-def get_trial_keyboard():
-    """Trial confirmation keyboard"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✅ Активировать", callback_data="confirm_trial"),
-            InlineKeyboardButton(text="❌ Отмена", callback_data="back_to_start")
-        ]
-    ])
-    return keyboard
-
-
-# Admin keyboards
 def get_admin_main_keyboard():
-    """Admin main menu"""
+    """Admin main menu keyboard"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👥 Управление пользователями", callback_data="admin_users")],
-        [InlineKeyboardButton(text="💰 Статистика платежей", callback_data="admin_payments")],
-        [InlineKeyboardButton(text="📊 Система баллов", callback_data="admin_points")],
-        [InlineKeyboardButton(text="🔧 Сервис", callback_data="admin_service")],
-        [InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats")]
+        [InlineKeyboardButton(text="📈 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="👥 Управление юзерами", callback_data="admin_users")],
+        [InlineKeyboardButton(text="💰 Баллы", callback_data="admin_points")],
+        [InlineKeyboardButton(text="📢 Уведомление", callback_data="admin_notify")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
     ])
     return keyboard
-
 
 def get_admin_users_keyboard():
-    """Admin users management"""
+    """Admin users management keyboard"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Создать пользователя", callback_data="admin_create_user")],
-        [InlineKeyboardButton(text="🔍 Поиск пользователя", callback_data="admin_search_user")],
-        [InlineKeyboardButton(text="📋 Список пользователей", callback_data="admin_list_users")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")]
+        [InlineKeyboardButton(text="🔍 Поиск", callback_data="admin_search_user")],
+        [InlineKeyboardButton(text="📋 Все юзеры", callback_data="admin_list_all")],
+        [InlineKeyboardButton(text="➕ Создать", callback_data="admin_create_user")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_main")]
     ])
     return keyboard
 
-
-def get_admin_service_keyboard():
-    """Admin service management"""
+def get_admin_user_actions_keyboard(user_id: int):
+    """Admin actions for specific user"""
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Создать сервис", callback_data="admin_create_service")],
-        [InlineKeyboardButton(text="📋 Список сервисов", callback_data="admin_list_services")],
-        [InlineKeyboardButton(text="♻️ Пересинхронизировать ноды", callback_data="admin_resync_nodes")],
-        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_menu")]
+        [InlineKeyboardButton(text="⏱️ Продлить", callback_data=f"admin_extend_{user_id}")],
+        [InlineKeyboardButton(text="🚫 Аннулировать", callback_data=f"admin_revoke_{user_id}")],
+        [InlineKeyboardButton(text="💰 Добавить баллы", callback_data=f"admin_add_points_{user_id}")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_users")]
     ])
     return keyboard
-
-
-def get_command_suggestions():
-    """Command suggestions for /<"""
-    return "/start - Главное меню\n/pay - Оплата\n/update_keys - Обновить ключи\n/account - Аккаунт\n/help - Помощь"
